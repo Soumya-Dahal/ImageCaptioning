@@ -1,0 +1,6 @@
+captioning_env/
+checkpoints/
+data/
+sentencepiece/
+__pycache__/
+

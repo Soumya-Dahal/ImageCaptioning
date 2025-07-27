@@ -1,0 +1,14 @@
+Using pip 25.1.1 from /home/soumya/.local/lib/python3.13/site-packages/pip (python 3.13)
+Defaulting to user installation because normal site-packages is not writeable
+Collecting sentencepiece
+  Using cached sentencepiece-0.2.0.tar.gz (2.6 MB)
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: sentencepiece
+  Building wheel for sentencepiece (pyproject.toml): started
+  Building wheel for sentencepiece (pyproject.toml): finished with status 'error'
+Failed to build sentencepiece
