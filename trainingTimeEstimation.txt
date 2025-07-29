@@ -1,0 +1,109 @@
+Training Time Estimation
+1. Model and Dataset Details
+Model Architecture (from custom_vit_decoder.py):
+ViT Encoder: 12 layers, 12 attention heads, EMBED_DIM=768, feed-forward dimension 3072, processes 224x224 images with PATCH_SIZE=16 (196 patches + 1 [CLS] token = 197 tokens).
+Transformer Decoder: 6 layers, 8 attention heads, DEC_EMBED_DIM=512, feed-forward dimension 2048, VOCAB_SIZE=30,000, MAX_SEQ_LEN=50.
+Parameter Count: Approximate estimate:
+ViT Encoder: Similar to ViT-Base (~86M parameters for 12 layers, 768 dim, 3072 FFN).
+Decoder: ~50M parameters (6 layers, 512 dim, 2048 FFN, 30,000 vocab size for embedding/projection).
+Total: ~100–150M parameters.
+Computation: Uses mixed precision (USE_AMP=True), leveraging FP16 on the RTX 4090’s tensor cores.
+Dataset (from train_custom_model.py and config.py):
+Training Set: CocoDataset with ANNOTATIONS_PATH="./data/annotations/captions_train2017.json" and IMAGES_PATH="./data/train2017", limited to max_samples=1000.
+COCO 2017 train set has ~118K images with ~591K captions (5 captions per image). With max_samples=1000, assume ~1000 images (~5000 captions, as each image has multiple captions processed independently).
+Validation Set: VAL_ANNOTATIONS_PATH="./data/annotations/captions_val2017.json", VAL_IMAGES_PATH="./data/val2017", max_samples=1000 (~5000 captions).
+Batch Size: BATCH_SIZE=4 (small, likely due to experimentation or memory constraints).
+Data Loading: Uses num_workers=4 in DataLoader, which may introduce minor I/O overhead.
+Hyperparameters (from config.py):
+Epochs: PRETRAIN_EPOCHS=3 for pre-training.
+Learning Rate: LEARNING_RATE=1e-4 for pre-training.
+Warmup Steps: WARMUP_STEPS=1000.
+Optimizer: AdamW with weight decay 0.01 (from train_custom_model.py).
+Mixed Precision: USE_AMP=True.
+Device: DEVICE="cuda" (RTX 4090).
+2. RTX 4090 Performance
+Specifications (from web sources):
+VRAM: 24 GB, sufficient for BATCH_SIZE=4 with a ~100–150M parameter model in FP16.
+Compute: ~82 TFLOPS in FP16, optimized for mixed precision training.
+Throughput: For similar vision tasks (e.g., ResNet-50), the RTX 4090 processes ~1000–2000 images/second in FP16 for inference. Training is slower due to backpropagation.
+Batch Processing Estimate:
+A ViT-Base model (~86M parameters) on a vision task with FP16 takes ~0.1–0.5 seconds per batch for small batch sizes (e.g., 4–16).
+Given BATCH_SIZE=4 and the decoder’s additional computation, assume ~0.5 seconds per batch for training (conservative, as FP16 and tensor cores improve throughput).
+3. Training Time Calculation
+Training Set:
+~5000 image-caption pairs (1000 images, ~5 captions each).
+Batches per epoch: 5000 / 4 = 1250 batches.
+Batch time: ~0.5 seconds (based on ViT training benchmarks, adjusted for small batch size and decoder).
+Epoch time: 1250 * 0.5 = 625 seconds ≈ 10.42 minutes.
+Total training time (3 epochs): 3 * 625 = 1875 seconds ≈ 31.25 minutes.
+Validation Set:
+~5000 image-caption pairs, 1250 batches.
+Validation is faster (no backpropagation), assume ~0.2 seconds/batch (FP16 inference).
+Epoch validation time: 1250 * 0.2 = 250 seconds ≈ 4.17 minutes.
+Total validation time (3 epochs): 3 * 250 = 750 seconds ≈ 12.5 minutes.
+Total Time:
+Training + validation: 31.25 + 12.5 = 43.75 minutes ≈ 44 minutes.
+Overhead:
+Data loading (num_workers=4) and checkpointing (MODEL_SAVE_PATH="./checkpoints") may add ~10–20% overhead.
+Adjusted total: 44 * 1.15 ≈ 50.6 minutes ≈ 51 minutes.
+4. Factors Affecting Training Time
+Small Batch Size: BATCH_SIZE=4 is very small, increasing the number of batches (1250 per epoch) and reducing GPU utilization efficiency. A larger batch size (e.g., 16–32, feasible with 24 GB VRAM) would reduce training time but isn’t specified.
+Mixed Precision: USE_AMP=True leverages FP16, reducing memory usage and speeding up training by ~1.5–2x compared to FP32.
+Small Dataset: max_samples=1000 drastically reduces training time compared to full COCO (~118K images, ~591K captions, which would take ~1–2 days).
+Epochs: PRETRAIN_EPOCHS=3 is low, likely for experimentation, keeping training time short.
+Data Loading: num_workers=4 may cause minor I/O bottlenecks on fast SSDs, but the RTX 4090’s compute speed dominates.
+Approximate BLEU-4 Score
+1. Evaluation Context
+Validation: The validate_model function computes BLEU-4 scores on the validation set (1000 samples, ~5000 captions) using compute_bleu, comparing generated captions to COCO ground-truth captions.
+Model: The ImageCaptioningModel (ViT encoder + transformer decoder) is trained from scratch (train_custom_model.py supports resuming from checkpoints but starts fresh if none exist).
+Tokenizer: Uses a SentencePiece model (TOKENIZER_MODEL_PATH="./tokenizer.model", VOCAB_SIZE=30,000) trained on COCO captions, ensuring vocabulary alignment.
+2. Expected BLEU-4 Score
+SOTA Benchmarks:
+mPLUG (~432M parameters) achieves ~44.3 BLEU-4 on the COCO “Karpathy” test split.
+YOLOv3-LSTM (~108M parameters) achieves ~44.3 BLEU-4 on COCO.
+NeuralTalk2 (VGG-based, older model) achieves ~30–35 BLEU-4 (~0.9 CIDEr) on full COCO after ~2 days of training.
+This Model:
+Architecture: ~100–150M parameters, with a strong ViT encoder (12 layers, 768 dim) and a 6-layer decoder (512 dim), comparable to modern encoder-decoder models.
+Training Data: Only 1000 images (~5000 captions), a tiny fraction of COCO’s ~118K images, limiting generalization and vocabulary coverage.
+Epochs: PRETRAIN_EPOCHS=3 is very low, likely insufficient for full convergence, reducing BLEU-4 compared to SOTA models trained for 20–50 epochs.
+No Pre-training: Training from scratch (no pre-trained weights) further limits performance.
+Estimate:
+With only 3 epochs and 1000 samples, the model may overfit to the small dataset or underfit due to limited training, yielding a BLEU-4 score of 20–30.
+If the model converges reasonably (e.g., capturing common COCO patterns like “man,” “dog,” from tokenizer.vocab), it could reach 25–30.
+Compared to SOTA (~44.3), the score is lower due to the small dataset and few epochs. With more epochs (e.g., 30) or the full COCO dataset, it could approach ~35–40.
+3. Factors Affecting BLEU-4
+Small Dataset: max_samples=1000 limits diversity, reducing BLEU-4 compared to full COCO training (~40–44 for SOTA models).
+Few Epochs: PRETRAIN_EPOCHS=3 is insufficient for robust learning, capping performance.
+Tokenizer: The SentencePiece model, trained on COCO captions, supports relevant tokenization (e.g., ▁man, ▁dog), aiding BLEU-4 but limited by training data.
+Model Capacity: The ViT + transformer decoder is powerful, but its effectiveness is constrained by the small dataset and short training.
+Validation Set: The 1000-sample validation set may not align with the standard COCO “Karpathy” split, affecting comparability to SOTA scores.
+Impact of config.py Settings
+Small Batch Size (BATCH_SIZE=4): Reduces GPU utilization, increasing training time (1250 batches/epoch vs. ~157 for BATCH_SIZE=32). A larger batch size (e.g., 16–32) would be more efficient with 24 GB VRAM.
+Few Epochs (PRETRAIN_EPOCHS=3): Limits training time to ~51 minutes but likely prevents convergence, lowering BLEU-4.
+Image Size (IMAGE_SIZE=(224, 224)): Standardizes COCO’s variable-resolution images, suitable for ViT but may lose detail from high-resolution images.
+Vocabulary Size (VOCAB_SIZE=30,000): Matches the tokenizer, sufficient for COCO captions but may be underutilized with only 1000 samples.
+Mixed Precision (USE_AMP=True): Speeds up training and reduces memory usage, critical for fitting the model in VRAM.
+Learning Rate (LEARNING_RATE=1e-4, WARMUP_STEPS=1000): Reasonable for training from scratch, but 1000 warmup steps may be excessive for 3 epochs (~3750 total steps), potentially delaying learning.
+Final Estimates
+Training Time: ~51 minutes on an NVIDIA RTX 4090 GPU for 3 epochs, including ~31.25 minutes for training (625 seconds/epoch) and ~12.5 minutes for validation (250 seconds/epoch), with ~15% overhead for data loading and checkpointing.
+BLEU-4 Score: 20–30, likely closer to 25–30 if the model captures common COCO caption patterns, but well below SOTA (~44.3) due to the small dataset (max_samples=1000) and few epochs (PRETRAIN_EPOCHS=3).
+Notes
+Scaling to Full COCO: If trained on the full COCO 2017 dataset (~118K images, ~591K captions), with BATCH_SIZE=4, expect ~147,750 batches/epoch (~20.5 hours/epoch in FP16), totaling ~2.5–3 days for 3 epochs. BLEU-4 could reach ~35–40 with more epochs (e.g., 20–30).
+Improving BLEU-4: Increasing PRETRAIN_EPOCHS (e.g., to 20), using the full COCO dataset, or fine-tuning (FINETUNE_EPOCHS=5, FINETUNE_LR=1e-5) could push BLEU-4 toward ~35–40.
+Optimizing Training Time: Increasing BATCH_SIZE to 16–32 (feasible with 24 GB VRAM) would reduce batches to ~313–156/epoch, cutting training time to ~20–30 minutes for 3 epochs.
+
+
+FOR Batch_size = 16 and epochs = 25 and using full coco2017 dataset
+Training Time: ~5 days (119.96 hours) on a single NVIDIA RTX 4090 GPU for 25 epochs, including ~4.11 hours/epoch for training (~36,965 batches * 0.4 seconds) and ~3.91 minutes/epoch for validation (~1,563 batches * 0.15 seconds), with ~15% overhead for data loading and checkpointing.
+BLEU-4 Score: 38–42, likely ~40–42 with good convergence, competitive with modern models but slightly below SOTA (~44.3) due to training from scratch and potential lack of advanced decoding (e.g., beam search).
+
+Notes
+Optimizing Training Time:
+Increase BATCH_SIZE to 32 (feasible with 24 GB VRAM and FP16), reducing batches to ~18,483/epoch, cutting training time to ~2.05 hours/epoch (~51.25 hours ≈ 2.14 days for 25 epochs).
+Use num_workers=8–16 or a fast SSD to reduce I/O bottlenecks for 118K images.
+Improving BLEU-4:
+Add beam search to the generate method in custom_vit_decoder.py to explore multiple caption hypotheses, potentially boosting BLEU-4 to ~43–44.
+Fine-tune for 5 epochs (FINETUNE_EPOCHS=5, FINETUNE_LR=1e-5) after pre-training, which could improve BLEU-4 to ~42–44.
+Use the full COCO dataset without max_samples ensures robust training, as implemented here.
+
+I/O Bottlenecks: The full COCO dataset (~118K images) may stress data loading with num_workers=4. Use a fast SSD and consider increasing num_workers to 8–16 to minimize delays.

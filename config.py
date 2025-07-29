@@ -8,7 +8,7 @@ EMBED_DIM = 768  # Encoder embedding dimension
 DEC_EMBED_DIM = 512  # Decoder embedding dimension
 
 # Training hyperparameters
-BATCH_SIZE = 4  # Batch size for training
+BATCH_SIZE = 8  # Batch size for training
 PRETRAIN_EPOCHS = 3  # Epochs for pre-training on COCO
 FINETUNE_EPOCHS = 5  # Epochs for fine-tuning
 LEARNING_RATE = 1e-4  # Learning rate for pre-training

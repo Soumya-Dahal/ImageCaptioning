@@ -23,7 +23,9 @@ def create_causal_mask(seq_len, device):
 def decode_without_special_tokens(tokenizer, token_ids):
     """Decode token IDs, removing special tokens."""
     special_tokens = {tokenizer.bos_id(), tokenizer.eos_id(), tokenizer.pad_id()}
+    # Filter out special tokens
     filtered_tokens = [tid for tid in token_ids if tid not in special_tokens]
+    # Decode remaining tokens
     return tokenizer.decode(filtered_tokens)
 
 def validate_model(model, val_dataloader, tokenizer, device):
@@ -55,24 +57,11 @@ def get_latest_checkpoint(checkpoint_dir, prefix):
     latest_epoch = max(epochs)
     return os.path.join(checkpoint_dir, f"{prefix}_epoch_{latest_epoch}.pth")
 
-def train_model(model, train_dataloader, val_dataloader, tokenizer, epochs=config.PRETRAIN_EPOCHS, device=config.DEVICE, lr=config.LEARNING_RATE, is_finetune=False, encoder_only=False):
+def train_model(model, train_dataloader, val_dataloader, tokenizer, epochs=config.PRETRAIN_EPOCHS, device=config.DEVICE, lr=config.LEARNING_RATE, is_finetune=False):
     """Train the model with mixed precision and save checkpoints."""
     model.to(device)
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_id())
-    
-    # Initialize optimizer based on encoder_only
-    if encoder_only:
-        for param in model.decoder.parameters():
-            param.requires_grad = False
-        for param in model.projection.parameters():
-            param.requires_grad = False
-        optimizer = optim.AdamW(
-            [p for p in model.encoder.parameters() if p.requires_grad],
-            lr=lr, weight_decay=0.01
-        )
-    else:
-        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
-    
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=config.WARMUP_STEPS)
     scaler = amp.GradScaler(enabled=config.USE_AMP)
     
@@ -88,26 +77,12 @@ def train_model(model, train_dataloader, val_dataloader, tokenizer, epochs=confi
         checkpoint_path = get_latest_checkpoint(config.MODEL_SAVE_PATH, prefix)
     
     if checkpoint_path:
-        try:
-            checkpoint = torch.load(checkpoint_path, map_location=device)
-            model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-            # Try loading optimizer state, reinitialize if mismatch
-            try:
-                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            except ValueError as e:
-                print(f"Optimizer state mismatch: {e}. Reinitializing optimizer.")
-                optimizer = optim.AdamW(
-                    [p for p in model.encoder.parameters() if p.requires_grad] if encoder_only else model.parameters(),
-                    lr=lr, weight_decay=0.01
-                )
-                scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=config.WARMUP_STEPS)
-            start_epoch = checkpoint.get('epoch', 0)
-            best_bleu = checkpoint.get('bleu', 0.0)
-            print(f"Resumed from checkpoint: {checkpoint_path}, starting at epoch {start_epoch}")
-        except Exception as e:
-            print(f"Failed to load checkpoint: {e}. Starting from scratch.")
-            start_epoch = 0
-            best_bleu = 0.0
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        start_epoch = checkpoint.get('epoch', 0)
+        best_bleu = checkpoint.get('bleu', 0.0)
+        print(f"Resumed from checkpoint: {checkpoint_path}, starting at epoch {start_epoch}")
 
     for epoch in range(start_epoch, epochs):
         model.train()
@@ -185,7 +160,7 @@ if __name__ == "__main__":
         tokenizer=tokenizer,
         max_seq_len=config.MAX_SEQ_LEN,
         transform=train_transform,
-        max_samples=20000
+        max_samples=1000
     )
     val_dataset = CocoDataset(
         annotations_file=config.VAL_ANNOTATIONS_PATH,
@@ -193,28 +168,19 @@ if __name__ == "__main__":
         tokenizer=tokenizer,
         max_seq_len=config.MAX_SEQ_LEN,
         transform=val_transform,
-        max_samples=5000
+        max_samples=1000
     )
     
-    train_dataloader = DataLoader(train_dataset, batch_size=8, shuffle=True, num_workers=4)
-    val_dataloader = DataLoader(val_dataset, batch_size=8, shuffle=False, num_workers=4)
+    train_dataloader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4)
+    val_dataloader = DataLoader(val_dataset, batch_size=config.BATCH_SIZE, shuffle=False, num_workers=4)
     
     model = ImageCaptioningModel(
         vocab_size=config.VOCAB_SIZE,
         img_size=config.IMAGE_SIZE[0],
         patch_size=config.PATCH_SIZE,
         embed_dim=config.EMBED_DIM,
-        dec_embed_dim=config.DEC_EMBED_DIM,
-        pretrained_path='pretrained_patch_embed_hf_vit_b16.pth'
+        dec_embed_dim=config.DEC_EMBED_DIM
     )
     
-    train_model(
-        model,
-        train_dataloader,
-        val_dataloader,
-        tokenizer,
-        epochs=10,
-        lr=config.LEARNING_RATE,
-        is_finetune=False,
-        encoder_only=True
-    )
+    train_model(model, train_dataloader, val_dataloader, tokenizer, epochs=config.PRETRAIN_EPOCHS, lr=config.LEARNING_RATE, is_finetune=False)
+
